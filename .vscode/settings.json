@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "init.h": "c",
+        "compiler.h": "c",
+        "types.h": "c",
+        "module.h": "c",
+        "interrupt.h": "c"
+    }
+}
