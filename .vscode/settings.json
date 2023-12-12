@@ -4,6 +4,9 @@
         "compiler.h": "c",
         "types.h": "c",
         "module.h": "c",
-        "interrupt.h": "c"
+        "interrupt.h": "c",
+        "stdbool.h": "c",
+        "errno.h": "c",
+        "errno-base.h": "c"
     }
 }

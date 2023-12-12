@@ -63,6 +63,11 @@
 #include <linux/net.h>
 #include <linux/in.h>
 #include <linux/socket.h>
+#include <linux/inet.h>
+#include <linux/errno.h>
+#include <linux/uaccess.h>
+#include <net/udp.h>
+#include "ve_common.h"
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define DRIVER_VERSION "0.1"
@@ -82,6 +87,16 @@
                 p = &print_buf[i + 1];                                                            \
             }                                                                                     \
         }                                                                                         \
+    } while (0)
+
+#define ERRRET(c, s, ...)                                                                 \
+    do                                                                                    \
+    {                                                                                     \
+        if (c)                                                                            \
+        {                                                                                 \
+            printk("%s(%d) %s " s "\n", __FILENAME__, __LINE__, __func__, ##__VA_ARGS__); \
+            goto error_return;                                                            \
+        }                                                                                 \
     } while (0)
 
 #define BUF_SIZE 400
@@ -125,6 +140,7 @@ typedef struct str_arp_data
 #define veth_RXQ_SIZE 1
 
 void send_udp(uint8_t *data, size_t len);
+static int veth_netdev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd);
 
 static struct net_device *netdev;
 
@@ -148,7 +164,6 @@ static netdev_tx_t veth_netdev_start_xmit(struct sk_buff *skb, struct net_device
             // request
 
             send_udp(skb->data, skb->len);
-
         }
     }
 
@@ -167,6 +182,16 @@ ndev->stats.tx_errors++;
 netif_stop_queue(ndev);
 returnNETDEV_TX_BUSY;
 #endif
+}
+
+static int veth_netdev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
+{
+    (void)dev;
+    (void)ifr;
+    (void)cmd;
+
+    d("");
+    return 0;
 }
 
 static int veth_netdev_open(struct net_device *ndev)
@@ -242,13 +267,14 @@ static const struct net_device_ops veth_netdev_ops = {
     .ndo_open = veth_netdev_open,
     .ndo_stop = veth_netdev_close,
     .ndo_start_xmit = veth_netdev_start_xmit,
+    .ndo_do_ioctl = veth_netdev_ioctl,
     .ndo_change_mtu = veth_netdev_change_mtu,
     .ndo_tx_timeout = veth_netdev_tx_timeout,
     .ndo_set_mac_address = eth_mac_addr,
 };
 
 static void veth_get_drvinfo(__attribute__((unused)) struct net_device *dev,
-                            struct ethtool_drvinfo *info)
+                             struct ethtool_drvinfo *info)
 {
     d("");
     strlcpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
@@ -299,8 +325,8 @@ static void veth_get_strings(struct net_device *dev, u32 sset, u8 *data)
 
 static void
 veth_get_ethtool_stats(struct net_device *dev,
-                      __attribute__((unused)) struct ethtool_stats *stats,
-                      u64 *data)
+                       __attribute__((unused)) struct ethtool_stats *stats,
+                       u64 *data)
 {
     int i = 0;
 
@@ -316,6 +342,25 @@ veth_get_ethtool_stats(struct net_device *dev,
     data[i++] = dev->stats.tx_bytes;
     data[i++] = dev->stats.tx_errors;
     data[i++] = dev->stats.tx_dropped;
+}
+
+void veth_netdev_rx(struct net_device *ndev, uint8_t *buf, int len)
+{
+    struct sk_buff *skb;
+
+    skb = netdev_alloc_skb_ip_align(ndev, len);
+    if (!skb)
+    {
+        d("netdev_alloc_skb_ip_align failed.");
+        return;
+    }
+
+    memcpy(skb_put(skb, len), buf, len);
+
+    skb->dev = ndev;
+    skb->protocol = eth_type_trans(skb, ndev);
+    netif_receive_skb(skb);
+    d("called netif_receive_skb");
 }
 
 static const struct ethtool_ops veth_ethtool_ops = {
@@ -360,6 +405,7 @@ static int __init veth_netdev_init_module(void)
     rc = register_netdev(netdev);
 
     d("%s: %s created rc:%d", KBUILD_MODNAME, netdev->name, rc);
+    netif_start_queue(netdev);
     return 0;
 
 #if 0
@@ -411,48 +457,51 @@ char *b2s(const void *data, int maxlen)
     return buf;
 }
 
+static mm_segment_t _oldfs;
 void send_udp(uint8_t *data, size_t len)
 {
-    struct socket *sock;
+    struct socket *sock = NULL;
     struct sockaddr_in sin;
     struct msghdr msg;
     struct iovec iov;
+    struct file *fp = NULL;
     int ret;
-    ret = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &sock);
-    if (ret < 0)
-    {
-        d("sock_create error");
-        goto error_return;
-    }
 
+    ret = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_IP, &sock);
+    ERRRET(ret < 0, "sock_create failed. %d", ret);
+    fp = sock_alloc_file(sock, 0, NULL);
+    d("sock_create:%d fp:%p", ret, fp);
+
+    memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
-    sin.sin_port = htons(7144);
+    sin.sin_port = htons(UDP_SERVER_PORT);
     sin.sin_addr.s_addr = 0x0100007f;
+    // sin.sin_addr.s_addr = 0x690aa8c0;
 
-    ret = sock->ops->connect(sock, (struct sockaddr *)&sin, sizeof(struct sockaddr), 0);
-    if (ret < 0)
-    {
-        d("connect error");
-        goto error_return;
-    }
+    // ret = sock->ops->connect(sock, (struct sockaddr *)&sin, sizeof(struct sockaddr), 0);
+    // ERRRET(ret < 0, "connect error. %d", ret);
+    // d("connect:%d",ret);
 
-    msg.msg_flags = 0;
+    memset(&msg, 0, sizeof(msg));
     msg.msg_name = &sin;
     msg.msg_namelen = sizeof(struct sockaddr_in);
-    msg.msg_control = NULL;
-    msg.msg_controllen = 0;
 
+    memset(&iov, 0, sizeof(iov));
     iov.iov_base = data;
     iov.iov_len = len;
 
     iov_iter_init(&msg.msg_iter, READ, &iov, 1, len);
+    d("iter fl:%d iv:%p miv:%p ivl:%ld", msg.msg_flags, &iov, msg.msg_iter.iov, msg.msg_iter.count);
 
+    d("msg_name:%s", b2s(&sin, sizeof(sin)));
+    d("sock_sendmsg len:%ld\n%s", len, b2s(&iov, len));
+    // ret = sock->ops->sendmsg(sock, &msg, len);
     ret = sock_sendmsg(sock, &msg);
-    if (ret < 0)
-    {
-        d("send error");
-    }
+    // ret = udp_sendmsg(sock, &msg, len);
+    ERRRET(ret < 0, "sock_sendmsg failed.%d", ret);
 
 error_return:
+    if (sock >= 0)
+        sock_release(sock);
     return;
 }
