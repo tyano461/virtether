@@ -11,7 +11,7 @@
                 "/usr/local/include",
                 "/usr/include/x86_64-linux-gnu",
                 "/usr/include",
-                "/usr/src/linux-headers-5.15.0-76-generic/include",
+                "/usr/src/kernels/6.5.6-300.fc39.x86_64/include",
                 "${workspaceFolder}/**"
             ],
             "defines": [],

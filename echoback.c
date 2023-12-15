@@ -10,6 +10,7 @@
 #include <sys/queue.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <sys/fcntl.h>
 #include "ve_common.h"
 
 #define NEVENTS 1
@@ -49,12 +50,16 @@ typedef struct str_txlist
 /* functions */
 void *recv_main(void *param);
 char *b2s(uint8_t *data, size_t len);
+void send_callback(uint8_t *data, size_t len);
 
 /* variables */
 pthread_mutex_t mutex;
 pthread_cond_t cond;
 TAILQ_HEAD(tqhead, str_txlist)
 qmhead;
+
+uint8_t send_buf[0x200];
+size_t send_size;
 
 /* functions */
 int main(void)
@@ -71,6 +76,7 @@ int main(void)
 
     while (1)
     {
+        send_size = 0;
         pthread_mutex_lock(&mutex);
         queue = TAILQ_FIRST(&qmhead);
         d("queue:%p", queue);
@@ -78,6 +84,11 @@ int main(void)
         {
             TAILQ_REMOVE(&qmhead, queue, entry);
             d("%s", b2s(queue->data, queue->len));
+            if (queue->len)
+            {
+                memcpy(send_buf, queue->data, queue->len);
+                send_size = queue->len;
+            }
             free(queue);
         }
         else
@@ -85,6 +96,10 @@ int main(void)
             pthread_cond_wait(&cond, &mutex);
         }
         pthread_mutex_unlock(&mutex);
+        if (send_size)
+        {
+            send_callback(send_buf, send_size);
+        }
     }
 
     return 0;
@@ -123,7 +138,6 @@ void *recv_main(void *param)
 
     while (1)
     {
-        printf("before epoll_wait\n");
         nfds = epoll_wait(epfd, ev_ret, NEVENTS, -1);
         ERRRET(nfds <= 0, "epoll_wait");
 
@@ -187,4 +201,22 @@ char *b2s(uint8_t *data, size_t orgsize)
     }
     *p++ = '\0';
     return print_buf;
+}
+
+void send_callback(uint8_t *data, size_t len)
+{
+    int fd;
+    int written;
+    const char *devname = "/dev/veth_cdev";
+
+    fd = open(devname, O_WRONLY);
+    ERRRET(fd < 0, "open failed.");
+
+    written = write(fd, data, len);
+    ERRRET(written <= 0, "write failed.");
+
+    d("write:%d", written);
+error_return:
+    if (fd >= 0)
+        close(fd);
 }

@@ -59,6 +59,8 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/module.h>
+#include <linux/fs.h>
+#include <linux/cdev.h>
 #include <linux/if_arp.h>
 #include <linux/net.h>
 #include <linux/in.h>
@@ -66,11 +68,15 @@
 #include <linux/inet.h>
 #include <linux/errno.h>
 #include <linux/uaccess.h>
-#include <net/udp.h>
+#include <net/inet_common.h>
 #include "ve_common.h"
 
+/* defines */
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #define DRIVER_VERSION "0.1"
+#define VETH_IRQ_NAME "veth_irq7"
+#define CDEV_CLASS "veth_cdev_class"
+#define CDEV_NAME "veth_cdev"
 
 #define d(s, ...)                                                                                 \
     do                                                                                            \
@@ -110,9 +116,6 @@ MODULE_DESCRIPTION(KBUILD_MODNAME);
 MODULE_VERSION(DRIVER_VERSION);
 MODULE_LICENSE("GPL");
 
-char *b2s(const void *data, int maxlen);
-
-char print_buf[1000];
 struct veth_netdev
 {
     struct net_device *ndev;
@@ -139,12 +142,27 @@ typedef struct str_arp_data
 #define veth_TX_TIMEOUT_MS 1000
 #define veth_RXQ_SIZE 1
 
+/* functions */
 void send_udp(uint8_t *data, size_t len);
 static int veth_netdev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd);
+char *b2s(const void *data, int maxlen);
+static void create_chrdev(void);
+static void destroy_chrdev(void);
+static int veth_cdev_open(struct inode *node, struct file *fp);
+static ssize_t veth_cdev_write(struct file *fp, const char __user *data, size_t len, loff_t *offset);
+static int veth_cdev_release(struct inode *node, struct file *fp);
 
+/* implementation */
+/* variables */
 static struct net_device *netdev;
-
+static struct class *cdev_class;
+static struct cdev cdev;
+char print_buf[1000];
 uint8_t opposit_mac[6];
+static dev_t cdev_dev;
+static ssize_t written;
+static uint8_t dbuf[0x200];
+
 static netdev_tx_t veth_netdev_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
     struct ethhdr *eth;
@@ -273,6 +291,13 @@ static const struct net_device_ops veth_netdev_ops = {
     .ndo_set_mac_address = eth_mac_addr,
 };
 
+static const struct file_operations cdev_fops = {
+    .owner = THIS_MODULE,
+    .open = veth_cdev_open,
+    .write = veth_cdev_write,
+    .release = veth_cdev_release,
+};
+
 static void veth_get_drvinfo(__attribute__((unused)) struct net_device *dev,
                              struct ethtool_drvinfo *info)
 {
@@ -389,22 +414,25 @@ static int __init veth_netdev_init_module(void)
     netdev->hw_features = netdev->features;
     netdev->watchdog_timeo = msecs_to_jiffies(veth_TX_TIMEOUT_MS);
 
-    random_ether_addr(netdev->perm_addr);
-    memcpy(netdev->dev_addr, netdev->perm_addr, netdev->addr_len);
-    d("mac addr:%s", b2s(netdev->dev_addr, netdev->addr_len));
+    eth_random_addr(netdev->perm_addr);
+    memcpy((void *)netdev->dev_addr, netdev->perm_addr, netdev->addr_len);
+    d("mac addr(%d):%s", netdev->addr_len, b2s(netdev->dev_addr, netdev->addr_len));
+    //    memset(netdev->dev_addr, 0, 6);
 
     netdev->netdev_ops = &veth_netdev_ops;
     netdev->ethtool_ops = &veth_ethtool_ops;
 
     /* dummy opposit */
-    random_ether_addr(opposit_mac);
+    eth_random_addr(opposit_mac);
 
+    create_chrdev();
     // create tx queue
 
     netdev->mtu = 1500 - ETH_HLEN;
     rc = register_netdev(netdev);
 
     d("%s: %s created rc:%d", KBUILD_MODNAME, netdev->name, rc);
+
     netif_start_queue(netdev);
     return 0;
 
@@ -420,6 +448,7 @@ static void __exit veth_netdev_exit_module(void)
 {
     // struct veth_netdev *dev = netdev_priv(netdev);
 
+    destroy_chrdev();
     unregister_netdev(netdev);
     free_netdev(netdev);
 
@@ -457,20 +486,18 @@ char *b2s(const void *data, int maxlen)
     return buf;
 }
 
-static mm_segment_t _oldfs;
 void send_udp(uint8_t *data, size_t len)
 {
     struct socket *sock = NULL;
     struct sockaddr_in sin;
     struct msghdr msg;
     struct iovec iov;
-    struct file *fp = NULL;
     int ret;
 
     ret = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_IP, &sock);
     ERRRET(ret < 0, "sock_create failed. %d", ret);
-    fp = sock_alloc_file(sock, 0, NULL);
-    d("sock_create:%d fp:%p", ret, fp);
+    //    fp = sock_alloc_file(sock, 0, NULL);
+    d("sock_create:%d ", ret);
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
@@ -478,9 +505,9 @@ void send_udp(uint8_t *data, size_t len)
     sin.sin_addr.s_addr = 0x0100007f;
     // sin.sin_addr.s_addr = 0x690aa8c0;
 
-    // ret = sock->ops->connect(sock, (struct sockaddr *)&sin, sizeof(struct sockaddr), 0);
-    // ERRRET(ret < 0, "connect error. %d", ret);
-    // d("connect:%d",ret);
+    ret = sock->ops->connect(sock, (struct sockaddr *)&sin, sizeof(struct sockaddr), 0);
+    ERRRET(ret < 0, "connect error. %d", ret);
+    d("connect:%d", ret);
 
     memset(&msg, 0, sizeof(msg));
     msg.msg_name = &sin;
@@ -490,18 +517,79 @@ void send_udp(uint8_t *data, size_t len)
     iov.iov_base = data;
     iov.iov_len = len;
 
-    iov_iter_init(&msg.msg_iter, READ, &iov, 1, len);
-    d("iter fl:%d iv:%p miv:%p ivl:%ld", msg.msg_flags, &iov, msg.msg_iter.iov, msg.msg_iter.count);
+    iov_iter_init(&msg.msg_iter, WRITE, &iov, 1, len);
+    d("iter fl:%d iv:%p miv:%p ivl:%ld", msg.msg_flags, &iov, iter_iov(&msg.msg_iter), msg.msg_iter.count);
 
     d("msg_name:%s", b2s(&sin, sizeof(sin)));
     d("sock_sendmsg len:%ld\n%s", len, b2s(&iov, len));
     // ret = sock->ops->sendmsg(sock, &msg, len);
-    ret = sock_sendmsg(sock, &msg);
+    ret = inet_sendmsg(sock, &msg, msg_data_left(&msg));
     // ret = udp_sendmsg(sock, &msg, len);
-    ERRRET(ret < 0, "sock_sendmsg failed.%d", ret);
+    ERRRET(ret < 0, "inet_sendmsg failed.%d", ret);
 
 error_return:
     if (sock >= 0)
         sock_release(sock);
     return;
+}
+
+static void create_chrdev(void)
+{
+    int ret;
+    struct device *tdev;
+
+    ret = alloc_chrdev_region(&cdev_dev, 0, 1, CDEV_NAME);
+    ERRRET(ret, "alloc_chrdev_region failed");
+
+    cdev_class = class_create(CDEV_CLASS);
+    ERRRET(IS_ERR(cdev_class), "class_create");
+
+    cdev_init(&cdev, &cdev_fops);
+
+    ret = cdev_add(&cdev, cdev_dev, 1);
+    ERRRET(ret, "cdev_add failed");
+
+    tdev = device_create(cdev_class, NULL, cdev_dev, NULL, CDEV_NAME);
+    ERRRET(IS_ERR(tdev), "device_create failed.");
+
+error_return:
+    return;
+}
+
+static void destroy_chrdev(void)
+{
+    device_destroy(cdev_class, cdev_dev);
+    cdev_del(&cdev);
+    class_destroy(cdev_class);
+    unregister_chrdev_region(cdev_dev, 1);
+}
+
+static ssize_t veth_cdev_write(struct file *fp, const char __user *data, size_t len, loff_t *offset)
+{
+    if (!len || copy_from_user(dbuf, data, len))
+    {
+        d("copy failed.%ld", len);
+        return -1;
+    }
+    written = len;
+    d("");
+    return len;
+}
+
+static int veth_cdev_open(struct inode *node, struct file *fp)
+{
+    d("");
+    written = 0;
+    return 0;
+}
+
+static int veth_cdev_release(struct inode *node, struct file *fp)
+{
+    d("written:%ld", written);
+    if (written)
+    {
+        veth_netdev_rx(netdev, dbuf, written);
+        written = 0;
+    }
+    return 0;
 }
