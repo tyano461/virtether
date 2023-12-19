@@ -498,7 +498,7 @@ void send_udp(uint8_t *data, size_t len)
     ERRRET(ret < 0, "sock_create failed. %d", ret);
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
-    sin.sin_port = htons(UDP_SERVER_PORT);
+    sin.sin_port = htons(SERVER_PORT_FROM_DRIVER);
     sin.sin_addr.s_addr = 0x0100007f;
     // sin.sin_addr.s_addr = 0x690aa8c0;
 

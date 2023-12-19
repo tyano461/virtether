@@ -13,7 +13,7 @@
 #include <sys/fcntl.h>
 #include "ve_common.h"
 
-#define NEVENTS 1
+#define NEVENTS 2
 #define SERVER_ADDR INADDR_ANY
 #define PBUF_SIZE 2000
 
@@ -51,6 +51,7 @@ typedef struct str_txlist
 void *recv_main(void *param);
 char *b2s(uint8_t *data, size_t len);
 void send_callback(uint8_t *data, size_t len);
+static void send_udp(uint8_t *data, size_t len);
 
 /* variables */
 pthread_mutex_t mutex;
@@ -105,12 +106,29 @@ int main(void)
     return 0;
 }
 
+void init_sock_addr(int *sock, struct sockaddr_in *addr, uint32_t ip, uint16_t port)
+{
+    *sock = socket(AF_INET, SOCK_DGRAM, 0);
+    addr->sin_family = AF_INET;
+    addr->sin_addr.s_addr = ip;
+    addr->sin_port = htons(port);
+}
+
+int set_epoll_event(int epfd, int sock, struct epoll_event *ev)
+{
+
+    memset(ev, 0, sizeof(struct epoll_event));
+    ev->events = EPOLLIN;
+    ev->data.fd = sock;
+    return epoll_ctl(epfd, EPOLL_CTL_ADD, sock, ev);
+}
+
 void *recv_main(void *param)
 {
-    int sock1 = -1;
-    struct sockaddr_in addr1;
+    int sock1, sock2;
+    struct sockaddr_in addr1, addr2;
     int epfd;
-    struct epoll_event ev, ev_ret[NEVENTS];
+    struct epoll_event ev[NEVENTS], ev_ret[NEVENTS];
     char buf[2048];
     int i;
     int nfds;
@@ -119,22 +137,23 @@ void *recv_main(void *param)
     bool found;
     (void)param;
 
-    sock1 = socket(AF_INET, SOCK_DGRAM, 0);
-    addr1.sin_family = AF_INET;
-    addr1.sin_addr.s_addr = SERVER_ADDR;
-    addr1.sin_port = htons(UDP_SERVER_PORT);
+    init_sock_addr(&sock1, &addr1, SERVER_ADDR, SERVER_PORT_FROM_QEMU);
+    init_sock_addr(&sock2, &addr2, SERVER_ADDR, SERVER_PORT_FROM_DRIVER);
 
     n = bind(sock1, (struct sockaddr *)&addr1, sizeof(addr1));
     ERRRET(n != 0, "bind");
 
-    epfd = epoll_create(NEVENTS);
-    ERRRET(epfd < 0, "epoll_create");
+    n = bind(sock2, (struct sockaddr *)&addr2, sizeof(addr2));
+    ERRRET(n != 0, "bind");
 
-    memset(&ev, 0, sizeof(ev));
-    ev.events = EPOLLIN;
-    ev.data.fd = sock1;
-    n = epoll_ctl(epfd, EPOLL_CTL_ADD, sock1, &ev);
-    ERRRET(n != 0, "epoll_ctl");
+    epfd = epoll_create(NEVENTS);
+    ERRRET(epfd < 0, "epoll_create failed.");
+
+    n = set_epoll_event(epfd, sock1, &ev[0]);
+    ERRRET(n != 0, "epoll_ctl failed.");
+
+    n = set_epoll_event(epfd, sock2, &ev[1]);
+    ERRRET(n != 0, "epoll_ctl failed.");
 
     while (1)
     {
@@ -160,11 +179,17 @@ void *recv_main(void *param)
                     d("cond signal");
                 }
             }
+            else if (ev_ret[i].data.fd == sock2)
+            {
+                found = true;
+                n = recv(sock2, buf, sizeof(buf), 0);
+                send_udp(buf, n);
+            }
         }
 
         if (!found)
         {
-            d("fd:%d sock1:%d", ev_ret[i].data.fd, sock1);
+            d("unknown receive fd:%d sock:%d/%d", ev_ret[i].data.fd, sock1, sock2);
         }
     }
 
@@ -219,4 +244,24 @@ void send_callback(uint8_t *data, size_t len)
 error_return:
     if (fd >= 0)
         close(fd);
+}
+
+static void send_udp(uint8_t *data, size_t len)
+{
+    int sock;
+    struct sockaddr_in addr;
+    int ret;
+
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+    ERRRET(sock < 0, "socket create failed.");
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(SERVER_PORT_TO_QEMU);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    ret = sendto(sock, data, len, 0, (struct sockaddr *)&addr, sizeof(addr));
+    d("sendto(%ld): %d", len, ret);
+
+error_return:
+    if (sock >= 0)
+        close(sock);
 }

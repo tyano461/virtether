@@ -1,5 +1,7 @@
 #ifndef __VE_COMMON_H__
 #define __VE_COMMON_H__
 
-#define UDP_SERVER_PORT 7145 
+#define SERVER_PORT_FROM_QEMU 7144 
+#define SERVER_PORT_FROM_DRIVER 7145 
+#define SERVER_PORT_TO_QEMU 7146
 #endif

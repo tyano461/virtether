@@ -26,18 +26,18 @@ digraph D {
                 label="FreeRTOS"
                 rip[label="IP"]
                 rap[label="ethernet"] 
-                rip->rap[color="red"]
+                rip->rap[]
                 rip->rap[dir="back"]
             }
         }
     }
-    lap -> some
-    chrdev->lap[color="red"]
-    rap -> f[color="red"]
+    lap -> some[color="red"]
+    chrdev->lap
+    rap -> f
     rap -> f[dir="back"]
-    some -> f[]
-    some -> f[dir="back",color="red"]
-    some -> chrdev[color="red"]
+    some -> f
+    some -> f[dir="back"]
+    some -> chrdev
     lip->some[style="invis"]
 
     { rank=same; lip; rip; }
