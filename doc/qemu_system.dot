@@ -1,0 +1,46 @@
+digraph D {
+    rankdir = TD;
+    newrank=true;
+
+    node[shape="box", style="rounded"]
+    subgraph cluster_Linux {
+        label="Linux"
+
+        subgraph cluster_Target {
+            label="target app"
+
+            lip[label="IP"]
+            lap[label="ethernet"]
+            lip->lap[dir="both"]
+        }
+        chrdev
+        subgraph cluster_dummy {
+            label="dummy process"
+            some[label="UDP"]
+        }
+        subgraph cluster_qemu {
+            label="qemu"
+            f[label="UDP"]
+
+            subgraph cluster_FreeRTOS {
+                label="FreeRTOS"
+                rip[label="IP"]
+                rap[label="ethernet"] 
+                rip->rap[color="red"]
+                rip->rap[dir="back"]
+            }
+        }
+    }
+    lap -> some
+    chrdev->lap[color="red"]
+    rap -> f[color="red"]
+    rap -> f[dir="back"]
+    some -> f[]
+    some -> f[dir="back",color="red"]
+    some -> chrdev[color="red"]
+    lip->some[style="invis"]
+
+    { rank=same; lip; rip; }
+    { rank=same; lap; rap; }
+    { rank=same; some; f; }
+}

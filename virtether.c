@@ -491,41 +491,29 @@ void send_udp(uint8_t *data, size_t len)
     struct socket *sock = NULL;
     struct sockaddr_in sin;
     struct msghdr msg;
-    struct iovec iov;
+    struct kvec iov;
     int ret;
 
     ret = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_IP, &sock);
     ERRRET(ret < 0, "sock_create failed. %d", ret);
-    //    fp = sock_alloc_file(sock, 0, NULL);
-    d("sock_create:%d ", ret);
-
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(UDP_SERVER_PORT);
     sin.sin_addr.s_addr = 0x0100007f;
     // sin.sin_addr.s_addr = 0x690aa8c0;
 
-    ret = sock->ops->connect(sock, (struct sockaddr *)&sin, sizeof(struct sockaddr), 0);
-    ERRRET(ret < 0, "connect error. %d", ret);
-    d("connect:%d", ret);
-
     memset(&msg, 0, sizeof(msg));
     msg.msg_name = &sin;
-    msg.msg_namelen = sizeof(struct sockaddr_in);
+    msg.msg_namelen = sizeof(sin);
 
     memset(&iov, 0, sizeof(iov));
     iov.iov_base = data;
     iov.iov_len = len;
 
-    iov_iter_init(&msg.msg_iter, WRITE, &iov, 1, len);
-    d("iter fl:%d iv:%p miv:%p ivl:%ld", msg.msg_flags, &iov, iter_iov(&msg.msg_iter), msg.msg_iter.count);
-
     d("msg_name:%s", b2s(&sin, sizeof(sin)));
     d("sock_sendmsg len:%ld\n%s", len, b2s(&iov, len));
-    // ret = sock->ops->sendmsg(sock, &msg, len);
-    ret = inet_sendmsg(sock, &msg, msg_data_left(&msg));
-    // ret = udp_sendmsg(sock, &msg, len);
-    ERRRET(ret < 0, "inet_sendmsg failed.%d", ret);
+    ret = kernel_sendmsg(sock, &msg, &iov, 1, len);
+    ERRRET(ret < 0, "sock_sendmsg failed.%d", ret);
 
 error_return:
     if (sock >= 0)
