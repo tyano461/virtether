@@ -9,32 +9,32 @@ digraph D {
         subgraph cluster_Target {
             label="target app"
 
-            lip[label="IP"]
-            lap[label="ethernet"]
+            lip[label="IP\n192.168.100.1"]
+            lap[label="ethernet\naa:00:02:11:22:33"]
             lip->lap[dir="both"]
         }
         chrdev
         subgraph cluster_dummy {
             label="dummy process"
-            some[label="UDP"]
+            some[label="UDP\nlocalhost:7145\nlocalhost:7146"]
         }
         subgraph cluster_qemu {
             label="qemu"
-            f[label="UDP"]
+            f[label="UDP\nlocalhost:7144"]
 
             subgraph cluster_FreeRTOS {
                 label="FreeRTOS"
-                rip[label="IP"]
-                rap[label="ethernet"] 
+                rip[label="IP\n192.168.100.2"]
+                rap[label="ethernet\naa:00:02:aa:bb:cc"]
                 rip->rap[]
                 rip->rap[dir="back"]
             }
         }
     }
-    lap -> some[color="red"]
+    lap -> some
     chrdev->lap
     rap -> f
-    rap -> f[dir="back"]
+    rap -> f[label="irq,shmem",dir="back"]
     some -> f
     some -> f[dir="back"]
     some -> chrdev

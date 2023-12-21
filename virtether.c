@@ -77,6 +77,7 @@
 #define VETH_IRQ_NAME "veth_irq7"
 #define CDEV_CLASS "veth_cdev_class"
 #define CDEV_NAME "veth_cdev"
+#define SELF_MAC_ADDR "aa:00:02:11:22:33"
 
 #define d(s, ...)                                                                                 \
     do                                                                                            \
@@ -104,6 +105,19 @@
             goto error_return;                                                            \
         }                                                                                 \
     } while (0)
+
+#ifndef ASSERT
+#define ASSERT(c, s, ...)                                                                 \
+    do                                                                                    \
+    {                                                                                     \
+        if (!(c))                                                                         \
+        {                                                                                 \
+            printk("%s(%d) %s " s "\n", __FILENAME__, __LINE__, __func__, ##__VA_ARGS__); \
+            while (1)                                                                     \
+                ;                                                                         \
+        }                                                                                 \
+    } while (0)
+#endif
 
 #define BUF_SIZE 400
 #define d2c(d) (d < 0xa) ? d + '0' : ((d < 0x10) ? d - 0xa + 'a' : '.')
@@ -151,6 +165,7 @@ static void destroy_chrdev(void);
 static int veth_cdev_open(struct inode *node, struct file *fp);
 static ssize_t veth_cdev_write(struct file *fp, const char __user *data, size_t len, loff_t *offset);
 static int veth_cdev_release(struct inode *node, struct file *fp);
+static void init_self_mac_addr(void);
 
 /* implementation */
 /* variables */
@@ -158,48 +173,28 @@ static struct net_device *netdev;
 static struct class *cdev_class;
 static struct cdev cdev;
 char print_buf[1000];
-uint8_t opposit_mac[6];
 static dev_t cdev_dev;
 static ssize_t written;
 static uint8_t dbuf[0x200];
+static macaddr_t self_mac_addr;
 
 static netdev_tx_t veth_netdev_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
     struct ethhdr *eth;
-    struct arphdr *arp;
 
     eth = (struct ethhdr *)skb->data;
     // ipv6 drop
     if (eth->h_proto == 0xdd86)
         return NETDEV_TX_OK;
 
-    // ARP
-    if (eth->h_proto == 0x0608)
-    {
-        arp = (struct arphdr *)&eth[1];
-        if (arp->ar_op == 0x0100)
-        {
-            // request
-
-            send_udp(skb->data, skb->len);
-        }
-    }
-
-    d("l:%x d:\n%s", skb->len, b2s(skb->data, skb->len));
-
     // enqueue
+    send_udp(skb->data, skb->len);
+    d("l:%x d:\n%s", skb->len, b2s(skb->data, skb->len));
 
     ndev->stats.tx_packets++;
     ndev->stats.tx_bytes += skb->len;
 
     return NETDEV_TX_OK;
-#if 0
-err:
-ndev->stats.tx_dropped++;
-ndev->stats.tx_errors++;
-netif_stop_queue(ndev);
-returnNETDEV_TX_BUSY;
-#endif
 }
 
 static int veth_netdev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
@@ -396,6 +391,50 @@ static const struct ethtool_ops veth_ethtool_ops = {
     .get_link = ethtool_op_get_link,
 };
 
+static uint8_t c2b(char u)
+{
+    if ('0' <= u && u <= '9')
+    {
+        return u - '0';
+    }
+    else if ('a' <= u && u <= 'f')
+    {
+        return u - 'a' + 0xa;
+    }
+    else if ('A' <= u && u <= 'F')
+    {
+        return u - 'A' + 0xa;
+    }
+    else
+    {
+        d("error c:%x", u);
+        return 0;
+    }
+}
+
+uint8_t s2b(char u, char l)
+{
+    return (c2b(u) << 4) | c2b(l);
+}
+
+static void init_self_mac_addr(void)
+{
+    const char *smac = SELF_MAC_ADDR;
+    int len = strlen(smac);
+    int i, index;
+    char u, l;
+
+    ASSERT(len == 17, "abnormal mac addr.");
+
+    index = 0;
+    for (i = 0; i < len; i += 3)
+    {
+        u = smac[i];
+        l = smac[i + 1];
+        self_mac_addr.addr[index++] = s2b(u, l);
+    }
+}
+
 static int __init veth_netdev_init_module(void)
 {
     int rc = 0;
@@ -414,16 +453,13 @@ static int __init veth_netdev_init_module(void)
     netdev->hw_features = netdev->features;
     netdev->watchdog_timeo = msecs_to_jiffies(veth_TX_TIMEOUT_MS);
 
-    eth_random_addr(netdev->perm_addr);
+    init_self_mac_addr();
+    *(macaddr_t *)netdev->perm_addr = self_mac_addr;
     memcpy((void *)netdev->dev_addr, netdev->perm_addr, netdev->addr_len);
     d("mac addr(%d):%s", netdev->addr_len, b2s(netdev->dev_addr, netdev->addr_len));
-    //    memset(netdev->dev_addr, 0, 6);
 
     netdev->netdev_ops = &veth_netdev_ops;
     netdev->ethtool_ops = &veth_ethtool_ops;
-
-    /* dummy opposit */
-    eth_random_addr(opposit_mac);
 
     create_chrdev();
     // create tx queue
@@ -496,11 +532,11 @@ void send_udp(uint8_t *data, size_t len)
 
     ret = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_IP, &sock);
     ERRRET(ret < 0, "sock_create failed. %d", ret);
+
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(SERVER_PORT_FROM_DRIVER);
     sin.sin_addr.s_addr = 0x0100007f;
-    // sin.sin_addr.s_addr = 0x690aa8c0;
 
     memset(&msg, 0, sizeof(msg));
     msg.msg_name = &sin;
@@ -510,7 +546,6 @@ void send_udp(uint8_t *data, size_t len)
     iov.iov_base = data;
     iov.iov_len = len;
 
-    d("msg_name:%s", b2s(&sin, sizeof(sin)));
     d("sock_sendmsg len:%ld\n%s", len, b2s(&iov, len));
     ret = kernel_sendmsg(sock, &msg, &iov, 1, len);
     ERRRET(ret < 0, "sock_sendmsg failed.%d", ret);
