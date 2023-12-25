@@ -1,4 +1,3 @@
-/*
 digraph D {
     rankdir = TD;
     node[shape="box", style="rounded"]
@@ -8,63 +7,18 @@ digraph D {
         subgraph cluster_Target {
             label="target app"
 
-            lip[label="IP"]
+            lip[label="IP\n192.168.100.1:7150"]
             lap[label="ethernet"]
             lip->lap[dir="both"]
         }
     }
     subgraph cluster_FreeRTOS {
         label="FreeRTOS"
-        rip[label="IP"]
+        rip[label="IP\n192.168.100.2:7151"]
         rap[label="ethernet"]
         rip->rap[dir="both"]
     }    
     some[label="something"]
     lap->some[dir="both"]
     rap->some[dir="both"]
-}
-*/
-digraph D {
-    rankdir = TD;
-    newrank=true;
-
-    node[shape="box", style="rounded"]
-    subgraph cluster_Linux {
-        label="Linux"
-
-        subgraph cluster_Target {
-            label="target app"
-
-            lip[label="IP"]
-            lap[label="ethernet"]
-            lip->lap[dir="both"]
-        }
-        subgraph cluster_dummy {
-            label="dummy process"
-            some[label="UDP"]
-            poll[label="checker"]
-            some->poll[style="invis"]
-        }
-        subgraph cluster_qemu {
-            label="qemu"
-            f[label="FILE"]
-
-            subgraph cluster_FreeRTOS {
-                label="FreeRTOS"
-                rip[label="IP"]
-                rap[label="ethernet"] 
-                rip->rap[dir="both"]
-            }
-        }
-    }
-    lap -> some
-    poll->f[label="polling"]
-    poll->lap
-    rap -> f
-    some -> rap[label="irq"]
-    lip->some[style="invis"]
-
-    { rank=same; lip; rip; }
-    { rank=same; lap; rap; }
-    { rank=same; f; poll;}
 }

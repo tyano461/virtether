@@ -2,6 +2,9 @@ KIND=$1
 
 if [ ""$KIND = "" ] ; then
     sudo rmmod virtether
+    sudo kill -9 $(pidof sample_app)
+    sudo kill -9 $(pidof sample_app)
+    sudo kill -9 $(pidof echoback)
     sudo kill -9 $(pidof echoback)
     make clean
 else
@@ -13,7 +16,7 @@ else
 
     cat << EOF
     try:
-        ping -w1 192.168.100.2
-        sudo echo "aiueo" > /dev/veth_cdev 
+        ./sample_app
+        then input to stdin
 EOF
 fi

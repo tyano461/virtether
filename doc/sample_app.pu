@@ -1,0 +1,45 @@
+@startuml
+!pragma teoz true
+
+title sample_app sequence
+
+box Linux #FFFCF8
+box sample_app #FFFCF0
+participant "server\nport:7150" as ls
+participant "client" as lc
+end box
+
+participant stdin as sin
+participant stdout
+end box
+
+box FreeRTOS #F8FFF8
+participant "server\nport:7151" as rs
+participant "client" as rc
+end box
+
+activate rc
+activate rs
+activate lc
+activate ls
+
+sin -> lc : manual input
+lc -> rs : send to tcp
+activate rs
+rs --> lc : response
+rs -> rc : queue
+lc --> rs : close
+deactivate rs
+rc -> rc : queue pop
+rc -> ls : send to tcp
+activate ls
+ls --> rc : response
+ls -> stdout : printf
+rc --> ls : close
+deactivate ls
+deactivate lc
+deactivate ls
+deactivate rs
+deactivate rc
+
+@enduml
