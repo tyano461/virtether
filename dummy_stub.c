@@ -259,7 +259,7 @@ static void send_udp(uint8_t *data, size_t len)
     addr.sin_port = htons(SERVER_PORT_TO_QEMU);
     addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     ret = sendto(sock, data, len, 0, (struct sockaddr *)&addr, sizeof(addr));
-    d("sendto(%ld): %d", len, ret);
+    d("sendto(%ld): %d data:\n%s", len, ret, b2s(data, len));
 
 error_return:
     if (sock >= 0)

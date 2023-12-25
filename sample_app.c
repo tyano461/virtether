@@ -20,22 +20,22 @@
 
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define d(s, ...)                                                                 \
-    do                                                                            \
-    {                                                                             \
-        pthread_mutex_lock(&mutex);                                               \
+#define d(s, ...)                                                                     \
+    do                                                                                \
+    {                                                                                 \
+        pthread_mutex_lock(&mutex);                                                   \
         printf("%s(%d) %s " s "\n", __FILENAME__, __LINE__, __func__, ##__VA_ARGS__); \
-        pthread_mutex_unlock(&mutex);                                             \
+        pthread_mutex_unlock(&mutex);                                                 \
     } while (0)
 
-#define ERRRET(c, s, ...)                                                                      \
-    do                                                                                         \
-    {                                                                                          \
-        if (c)                                                                                 \
-        {                                                                                      \
+#define ERRRET(c, s, ...)                                                                          \
+    do                                                                                             \
+    {                                                                                              \
+        if (c)                                                                                     \
+        {                                                                                          \
             fprintf(stderr, "%s(%d) %s " s "\n", __FILENAME__, __LINE__, __func__, ##__VA_ARGS__); \
-            goto error_return;                                                                 \
-        }                                                                                      \
+            goto error_return;                                                                     \
+        }                                                                                          \
     } while (0)
 
 #ifndef min
@@ -150,11 +150,7 @@ static void *server_thread(void *param)
     socklen_t csize;
     int epfd;
     struct epoll_event ev[NEVENTS], ev_ret[NEVENTS];
-    char buf[2048];
-    int i;
-    int nfds;
-    int n;
-    bool found;
+    int i, n, nfds;
     (void)param;
 
     init_sock_addr(&sock, &addr, SERVER_IP, SERVER_PORT);
@@ -177,7 +173,6 @@ static void *server_thread(void *param)
         nfds = epoll_wait(epfd, ev_ret, NEVENTS, -1);
         ERRRET(nfds <= 0, "epoll_wait");
 
-        found = false;
         for (i = 0; i < nfds; i++)
         {
             if (ev_ret[i].data.fd == sock)

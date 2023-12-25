@@ -2,7 +2,7 @@ KERNEL_SOURCE=/lib/modules/$(shell uname -r)/build
 obj-m += virtether.o
 MY_CFLAGS += -g -DDEBUG
 
-STUB   	    := echoback
+STUB   	    := dummy_stub
 SAMPLE_APP  := sample_app
 
 all: $(STUB) $(SAMPLE_APP)
@@ -14,7 +14,7 @@ clean:
 	make -C $(KERNEL_SOURCE) M=$(PWD) clean
 
 $(STUB):
-	gcc -g -O0 echoback.c -o $@
+	gcc -g -O0 dummy_stub.c -o $@
 
 $(SAMPLE_APP):
 	gcc -g -O0 -lpthread sample_app.c -o $@ 
