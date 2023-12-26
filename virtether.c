@@ -145,7 +145,7 @@ typedef struct str_ipaddr
     uint8_t addr[4];
 } ipaddr_t;
 
-typedef struct str_arp_data
+typedef struct arpbdy
 {
     macaddr_t src_mac;
     ipaddr_t src_ip;
@@ -166,6 +166,7 @@ static int veth_cdev_open(struct inode *node, struct file *fp);
 static ssize_t veth_cdev_write(struct file *fp, const char __user *data, size_t len, loff_t *offset);
 static int veth_cdev_release(struct inode *node, struct file *fp);
 static void init_self_mac_addr(void);
+static void arp_reply(uint8_t *data, size_t len);
 
 /* implementation */
 /* variables */
@@ -177,6 +178,7 @@ static dev_t cdev_dev;
 static ssize_t written;
 static uint8_t dbuf[0x200];
 static macaddr_t self_mac_addr;
+static uint8_t reply_data[0x30];
 
 static netdev_tx_t veth_netdev_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
@@ -368,6 +370,19 @@ void veth_netdev_rx(struct net_device *ndev, uint8_t *buf, int len)
 {
     struct sk_buff *skb;
 
+//    struct ethhdr *eth = (struct ethhdr *)buf;
+//    struct arphdr *arp;
+//    // ARP
+//    if (eth->h_proto == 0x0608)
+//    {
+//        arp = (struct arphdr *)&eth[1];
+//        // request
+//        if (arp->ar_op == 0x0100)
+//        {
+//            arp_reply(buf, len);
+//        }
+//    }
+
     skb = netdev_alloc_skb_ip_align(ndev, len);
     if (!skb)
     {
@@ -520,6 +535,30 @@ char *b2s(const void *data, int maxlen)
         *p++ = '\n';
     *p++ = '\0';
     return buf;
+}
+
+static void arp_reply(uint8_t *data, size_t len)
+{
+    memcpy(reply_data, data, len);
+    struct ethhdr *eth = (struct ethhdr*)data;
+    struct arphdr *arp = (struct arphdr *)&eth[1];
+    struct arpbdy *bdy = (struct arpbdy *)&arp[1];
+    macaddr_t tomac = *(macaddr_t *)eth->h_source;
+    ipaddr_t toip = bdy->src_ip;
+
+    eth = (struct ethhdr *)reply_data;
+    arp = (struct arphdr *)&eth[1];
+    bdy = (struct arpbdy *)&arp[1];
+
+    *(macaddr_t*)eth->h_dest = tomac;
+    *(macaddr_t*)eth->h_source = self_mac_addr;
+    arp->ar_op = 0x0200;
+    *(uint32_t*)&bdy->src_ip = 0x0164a8c0;
+    bdy->src_mac = self_mac_addr;
+    bdy->tgt_ip = toip;
+    bdy->tgt_mac = tomac;
+
+    send_udp(reply_data, len);
 }
 
 void send_udp(uint8_t *data, size_t len)

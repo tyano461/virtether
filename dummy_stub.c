@@ -50,8 +50,8 @@ typedef struct str_txlist
 /* functions */
 void *recv_main(void *param);
 char *b2s(uint8_t *data, size_t len);
-void send_callback(uint8_t *data, size_t len);
-static void send_udp(uint8_t *data, size_t len);
+void receive_data_to_ipstack(uint8_t *data, size_t len);
+static void send_to_qemu(uint8_t *data, size_t len);
 
 /* variables */
 pthread_mutex_t mutex;
@@ -80,7 +80,7 @@ int main(void)
         send_size = 0;
         pthread_mutex_lock(&mutex);
         queue = TAILQ_FIRST(&qmhead);
-        d("queue:%p", queue);
+        d("from qemu q:%p", queue);
         if (queue)
         {
             TAILQ_REMOVE(&qmhead, queue, entry);
@@ -99,7 +99,7 @@ int main(void)
         pthread_mutex_unlock(&mutex);
         if (send_size)
         {
-            send_callback(send_buf, send_size);
+            receive_data_to_ipstack(send_buf, send_size);
         }
     }
 
@@ -183,7 +183,7 @@ void *recv_main(void *param)
             {
                 found = true;
                 n = recv(sock2, buf, sizeof(buf), 0);
-                send_udp(buf, n);
+                send_to_qemu(buf, n);
             }
         }
 
@@ -228,7 +228,7 @@ char *b2s(uint8_t *data, size_t orgsize)
     return print_buf;
 }
 
-void send_callback(uint8_t *data, size_t len)
+void receive_data_to_ipstack(uint8_t *data, size_t len)
 {
     int fd;
     int written;
@@ -246,7 +246,7 @@ error_return:
         close(fd);
 }
 
-static void send_udp(uint8_t *data, size_t len)
+static void send_to_qemu(uint8_t *data, size_t len)
 {
     int sock;
     struct sockaddr_in addr;
